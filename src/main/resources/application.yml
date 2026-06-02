@@ -1,0 +1,142 @@
+server:
+  port: 8989
+
+spring:
+  application:
+    name: cloud-gateway
+
+  config:
+    import: optional:configserver:http://localhost:9196
+
+  cloud:
+    loadbalancer:
+      cache:
+        enabled: true
+        ttl: 35s
+        capacity: 256
+
+    gateway:
+      discovery:
+        locator:
+          enabled: true
+          lower-case-service-id: true
+
+      httpclient:
+        connect-timeout: 5000
+        response-timeout: 15s
+
+      default-filters:
+        - PreserveHostHeader
+
+      routes:
+        - id: order-service
+          uri: lb://ORDER-SERVICE
+          predicates:
+            - Path=/order/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: orderServiceCB
+                fallbackUri: forward:/fallback/order
+
+        - id: payment-service
+          uri: lb://PAYMENT-SERVICE
+          predicates:
+            - Path=/payment/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: paymentServiceCB
+                fallbackUri: forward:/fallback/payment
+
+eureka:
+  instance:
+    prefer-ip-address: true
+    ip-address: 127.0.0.1
+    instance-id: ${spring.application.name}:${server.port}
+    lease-renewal-interval-in-seconds: 10
+    lease-expiration-duration-in-seconds: 30
+  client:
+    service-url:
+      defaultZone: http://localhost:8761/eureka/
+    fetch-registry: true
+    register-with-eureka: true
+    registry-fetch-interval-seconds: 5
+
+resilience4j:
+  timelimiter:
+    instances:
+      orderServiceCB:
+        timeout-duration: 10s
+        cancel-running-future: true
+      paymentServiceCB:
+        timeout-duration: 10s
+        cancel-running-future: true
+
+  circuitbreaker:
+    instances:
+      orderServiceCB:
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 5
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 10s
+        permitted-number-of-calls-in-half-open-state: 2
+        register-health-indicator: true
+        automatic-transition-from-open-to-half-open-enabled: true
+        record-exceptions:
+          - java.io.IOException
+          - java.util.concurrent.TimeoutException
+          - org.springframework.cloud.gateway.support.NotFoundException
+        ignore-exceptions:
+          - org.springframework.web.server.ResponseStatusException
+      paymentServiceCB:
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 5
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 10s
+        permitted-number-of-calls-in-half-open-state: 2
+        register-health-indicator: true
+        automatic-transition-from-open-to-half-open-enabled: true
+        record-exceptions:
+          - java.io.IOException
+          - java.util.concurrent.TimeoutException
+          - org.springframework.cloud.gateway.support.NotFoundException
+        ignore-exceptions:
+          - org.springframework.web.server.ResponseStatusException
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus,circuitbreakers,gateway
+
+  endpoint:
+    health:
+      show-details: always
+    gateway:
+      enabled: true
+
+  health:
+    circuitbreakers:
+      enabled: true
+
+  # ✅ Zipkin — was missing, gateway traces now sent to Zipkin
+  zipkin:
+    tracing:
+      endpoint: http://localhost:9411/api/v2/spans
+
+  # ✅ Tracing — 100% sampling + B3 propagation
+  tracing:
+    sampling:
+      probability: 1.0
+    propagation:
+      type: b3_multi
+
+# ✅ Fixed logging — console pattern for traceId visibility
+logging:
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %5p [${spring.application.name:},%X{traceId:-},%X{spanId:-}] %pid --- [%15.15t] %-40.40logger{39} : %m%n"
+  level:
+    root: INFO
+    org.springframework.cloud.gateway: TRACE
+    io.github.resilience4j: DEBUG
