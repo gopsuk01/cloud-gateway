@@ -29,11 +29,17 @@ spring:
         - PreserveHostHeader
 
       routes:
+        - id: auth-service
+          uri: lb://AUTH-SERVICE
+          predicates:
+            - Path=/auth/**
+
         - id: order-service
           uri: lb://ORDER-SERVICE
           predicates:
             - Path=/order/**
           filters:
+            - AuthenticationFilter
             - name: CircuitBreaker
               args:
                 name: orderServiceCB
@@ -44,6 +50,7 @@ spring:
           predicates:
             - Path=/payment/**
           filters:
+            - AuthenticationFilter
             - name: CircuitBreaker
               args:
                 name: paymentServiceCB
